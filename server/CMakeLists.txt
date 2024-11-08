@@ -1,51 +1,59 @@
-﻿include_directories(../3rdpart)
-file(GLOB jsoncpp_src_list ../3rdpart/jsoncpp/*.cpp ../3rdpart/jsoncpp/*.h )
-add_library(jsoncpp STATIC ${jsoncpp_src_list})
+﻿# MIT License
+#
+# Copyright (c) 2016-2022 The ZLMediaKit project authors. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
 
-file(GLOB MediaServer_src_list ./*.cpp ./*.h)
-#message(STATUS ${MediaServer_src_list})
+file(GLOB MediaServer_SRC_LIST ./*.cpp ./*.h)
 
-# 添加git版本信息
-set(COMMIT_HASH "Git_NotFound_Unkown_commit")
-set(BRANCH_NAME "Git_NotFound_Unkown_branch")
-set(BUILD_TIME "")
+set(COMPILE_DEFINITIONS ${MK_COMPILE_DEFINITIONS})
 
-string(TIMESTAMP BUILD_TIME "%Y/%m/%d-%H:%M:%S")
-
-find_package(Git QUIET)
-if(GIT_FOUND)
-	execute_process(
-			COMMAND ${GIT_EXECUTABLE} log -1 --pretty=format:%H
-			OUTPUT_VARIABLE COMMIT_HASH
-			OUTPUT_STRIP_TRAILING_WHITESPACE
-			ERROR_QUIET
-			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../
-	)
-	execute_process(
-			COMMAND ${GIT_EXECUTABLE} symbolic-ref --short -q HEAD
-			OUTPUT_VARIABLE BRANCH_NAME
-			OUTPUT_STRIP_TRAILING_WHITESPACE
-			ERROR_QUIET
-			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../
-	)
+if(ENABLE_SERVER_LIB)
+  list(APPEND COMPILE_DEFINITIONS DISABLE_MAIN)
+  add_library(MediaServer STATIC ${MediaServer_SRC_LIST})
+  target_compile_definitions(MediaServer
+    PRIVATE ${COMPILE_DEFINITIONS})
+  target_compile_options(MediaServer
+    PRIVATE ${COMPILE_OPTIONS_DEFAULT})
+  target_link_libraries(MediaServer
+    PRIVATE ${MK_LINK_LIBRARIES})
+  update_cached_list(MK_LINK_LIBRARIES MediaServer)
+  return()
 endif()
 
-message(STATUS "Git version is ${BRANCH_NAME}:${COMMIT_HASH}:${BUILD_TIME}")
-
-configure_file(
-		${CMAKE_CURRENT_SOURCE_DIR}/version.h.ini
-		${CMAKE_BINARY_DIR}/Version.h
-		@ONLY
-)
-include_directories(${CMAKE_BINARY_DIR})
-add_definitions(-DENABLE_VERSION)
-
-add_executable(MediaServer ${MediaServer_src_list})
-
-if(WIN32)
-	set_target_properties(MediaServer PROPERTIES COMPILE_FLAGS  ${VS_FALGS} )
+# IOS 不编译可执行程序，只做依赖库
+if(IOS)
+  add_library(MediaServer STATIC ${MediaServer_SRC_LIST})
 else()
-	install(TARGETS MediaServer DESTINATION ${INSTALL_PATH_EXECUTABLE})
+  add_executable(MediaServer ${MediaServer_SRC_LIST})
 endif()
 
-target_link_libraries(MediaServer jsoncpp ${LINK_LIB_LIST})
+target_compile_definitions(MediaServer
+  PRIVATE ${COMPILE_DEFINITIONS})
+target_compile_options(MediaServer
+  PRIVATE ${COMPILE_OPTIONS_DEFAULT})
+
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+  target_link_libraries(MediaServer -Wl,--start-group ${MK_LINK_LIBRARIES} -Wl,--end-group)
+else()
+  target_link_libraries(MediaServer ${MK_LINK_LIBRARIES})
+endif()
+
+install(TARGETS MediaServer DESTINATION ${INSTALL_PATH_RUNTIME})

@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -12,22 +12,25 @@
 
 namespace mediakit{
 
-RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bool mark, uint32_t stamp) {
+RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bool mark, uint64_t stamp) {
     uint16_t payload_len = (uint16_t) (len + RtpPacket::kRtpHeaderSize);
     auto rtp = RtpPacket::create();
     rtp->setCapacity(payload_len + RtpPacket::kRtpTcpHeaderSize);
     rtp->setSize(payload_len + RtpPacket::kRtpTcpHeaderSize);
     rtp->sample_rate = _sample_rate;
     rtp->type = type;
+    rtp->track_index = _track_index;
 
-    //rtsp over tcp 头
+    // rtsp over tcp 头  [AUTO-TRANSLATED:4225b9ec]
+    // rtsp over tcp header
     auto ptr = (uint8_t *) rtp->data();
     ptr[0] = '$';
     ptr[1] = _interleaved;
     ptr[2] = payload_len >> 8;
     ptr[3] = payload_len & 0xFF;
 
-    //rtp头
+    // rtp头  [AUTO-TRANSLATED:64aef747]
+    // rtp header
     auto header = rtp->getHeader();
     header->version = RtpPacket::kRtpVersion;
     header->padding = 0;
@@ -35,11 +38,13 @@ RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bo
     header->csrc = 0;
     header->mark = mark;
     header->pt = _pt;
-    header->seq = htons(_seq++);
+    header->seq = htons(_seq);
+    ++_seq;
     header->stamp = htonl(uint64_t(stamp) * _sample_rate / 1000);
     header->ssrc = htonl(_ssrc);
-
-    //有效负载
+    rtp->ntp_stamp = stamp;
+    // 有效负载  [AUTO-TRANSLATED:8530a274]
+    // payload
     if (data) {
         memcpy(&ptr[RtpPacket::kRtpHeaderSize + RtpPacket::kRtpTcpHeaderSize], data, len);
     }

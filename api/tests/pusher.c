@@ -1,22 +1,16 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#include <signal.h>
 #include <string.h>
+#include <stdio.h>
 #include "mk_mediakit.h"
-
-#ifdef _WIN32
-#include "windows.h"
-#else
-#include "unistd.h"
-#endif
 
 typedef struct {
     mk_player player;
@@ -39,7 +33,7 @@ void release_player(mk_player *ptr) {
     }
 }
 
-void release_pusher(mk_media *ptr) {
+void release_pusher(mk_pusher *ptr) {
     if (ptr && *ptr) {
         mk_pusher_release(*ptr);
         *ptr = NULL;
@@ -48,9 +42,9 @@ void release_pusher(mk_media *ptr) {
 
 void release_context(Context **ptr){
     if (ptr && *ptr) {
-        release_pusher((*ptr)->pusher);
-        release_media((*ptr)->media);
-        release_player((*ptr)->player);
+        release_pusher(&(*ptr)->pusher);
+        release_media(&(*ptr)->media);
+        release_player(&(*ptr)->player);
         free(*ptr);
         *ptr = NULL;
     }
@@ -71,7 +65,8 @@ void API_CALL on_mk_media_source_regist_func(void *user_data, mk_media_source se
     Context *ctx = (Context *) user_data;
     const char *schema = mk_media_source_get_schema(sender);
     if (strncmp(schema, ctx->push_url, strlen(schema)) == 0) {
-        //判断是否为推流协议相关的流注册或注销事件
+        // 判断是否为推流协议相关的流注册或注销事件  [AUTO-TRANSLATED:00a88a17]
+        // Determine if it is a stream registration or deregistration event related to the streaming protocol
         release_pusher(&(ctx->pusher));
         if (regist) {
             ctx->pusher = mk_pusher_create_src(sender);
@@ -84,65 +79,29 @@ void API_CALL on_mk_media_source_regist_func(void *user_data, mk_media_source se
     }
 }
 
-void API_CALL on_mk_play_event_func(void *user_data, int err_code, const char *err_msg) {
+void API_CALL on_track_frame_out(void *user_data, mk_frame frame) {
+    Context *ctx = (Context *) user_data;
+    mk_media_input_frame(ctx->media, frame);
+}
+
+void API_CALL on_mk_play_event_func(void *user_data, int err_code, const char *err_msg, mk_track tracks[], int track_count) {
     Context *ctx = (Context *) user_data;
     release_media(&(ctx->media));
     release_pusher(&(ctx->pusher));
     if (err_code == 0) {
         //success
         log_debug("play success!");
-        ctx->media = mk_media_create("__defaultVost__", "live", "test", 0, 0, 0);
-
-        int video_codec = mk_player_video_codecId(ctx->player);
-        int audio_codec = mk_player_audio_codecId(ctx->player);
-        if(video_codec != -1){
-            mk_media_init_video(ctx->media, video_codec,
-                                mk_player_video_width(ctx->player),
-                                mk_player_video_height(ctx->player),
-                                mk_player_video_fps(ctx->player));
+        ctx->media = mk_media_create("__defaultVhost__", "live", "test", 0, 0, 0);
+        int i;
+        for (i = 0; i < track_count; ++i) {
+            mk_media_init_track(ctx->media, tracks[i]);
+            mk_track_add_delegate(tracks[i], on_track_frame_out, user_data);
         }
-
-        if(audio_codec != -1){
-            mk_media_init_audio(ctx->media,audio_codec,
-                                mk_player_audio_samplerate(ctx->player),
-                                mk_player_audio_channel(ctx->player),
-                                mk_player_audio_bit(ctx->player));
-        }
+        mk_media_init_complete(ctx->media);
         mk_media_set_on_regist(ctx->media, on_mk_media_source_regist_func, ctx);
 
     } else {
         log_warn("play failed: %d %s", err_code, err_msg);
-    }
-}
-
-void API_CALL on_mk_play_data_func(void *user_data,int track_type, int codec_id,void *data,size_t len, uint32_t dts,uint32_t pts){
-    Context *ctx = (Context *) user_data;
-    switch (codec_id) {
-        case 0 : {
-            //h264
-            mk_media_input_h264(ctx->media, data, (int)len, dts, pts);
-            break;
-        }
-        case 1 : {
-            //h265
-            mk_media_input_h265(ctx->media, data, (int)len, dts, pts);
-            break;
-        }
-        case 2 : {
-            //aac
-            mk_media_input_aac(ctx->media, data, (int)len, dts, data);
-            break;
-        }
-        case 3 : //g711a
-        case 4 : //g711u
-        case 5 : //opus
-            mk_media_input_audio(ctx->media, data, (int) len, dts);
-            break;
-
-        default: {
-            log_warn("unknown codec: %d", codec_id);
-            break;
-        }
     }
 }
 
@@ -151,18 +110,16 @@ void context_start(Context *ctx, const char *url_pull, const char *url_push){
     ctx->player = mk_player_create();
     mk_player_set_on_result(ctx->player, on_mk_play_event_func, ctx);
     mk_player_set_on_shutdown(ctx->player, on_mk_play_event_func, ctx);
-    mk_player_set_on_data(ctx->player, on_mk_play_data_func, ctx);
     mk_player_play(ctx->player, url_pull);
     strcpy(ctx->push_url, url_push);
 }
-
-//create_player("http://hls.weathertv.cn/tslslive/qCFIfHB/hls/live_sd.m3u8");
 
 int main(int argc, char *argv[]){
     mk_config config = {
             .ini = NULL,
             .ini_is_path = 0,
             .log_level = 0,
+            .log_mask = LOG_CONSOLE,
             .ssl = NULL,
             .ssl_is_path = 1,
             .ssl_pwd = NULL,
@@ -170,27 +127,29 @@ int main(int argc, char *argv[]){
     };
     mk_env_init(&config);
 
-    //可以通过
+    if (argc != 3) {
+        printf("Usage: ./pusher.c pull_url push_url\n");
+        return -1;
+    }
+
+    // 可以通过  [AUTO-TRANSLATED:9a320d61]
+    // Can be achieved through
     //rtmp://127.0.0.1/live/test
     //rtsp://127.0.0.1/live/test
-    //播放mk_media的数据
+    // 播放mk_media的数据  [AUTO-TRANSLATED:623dc58f]
+    // Playing the data of mk_media
     mk_rtsp_server_start(554, 0);
     mk_rtmp_server_start(1935, 0);
 
-    Context *ctx = (Context *)malloc(sizeof(Context));
+    Context *ctx = (Context *) malloc(sizeof(Context));
     memset(ctx, 0, sizeof(Context));
 
-    //推流给自己测试，当然也可以推流给其他服务器测试
-    context_start(ctx, "http://hls.weathertv.cn/tslslive/qCFIfHB/hls/live_sd.m3u8", "rtsp://127.0.0.1/live/rtsp_push");
+    // 推流给自己测试，当然也可以推流给其他服务器测试  [AUTO-TRANSLATED:616e4dc2]
+    // Stream to yourself for testing, of course, you can also stream to other servers for testing
+    context_start(ctx, argv[1], argv[2]);
 
-    int i = 10 * 60;
-    while(--i){
-#ifdef _WIN32
-        Sleep(1000);
-#else
-        sleep(1);
-#endif
-    }
+    log_info("enter any key to exit");
+    getchar();
 
     release_context(&ctx);
     return 0;

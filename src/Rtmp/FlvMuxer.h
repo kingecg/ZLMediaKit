@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -13,56 +13,53 @@
 
 #include "Rtmp/Rtmp.h"
 #include "Rtmp/RtmpMediaSource.h"
-#include "Network/Socket.h"
-#include "Common/Stamp.h"
-using namespace toolkit;
+#include "Poller/EventPoller.h"
 
 namespace mediakit {
 
-class FlvMuxer{
+class FlvMuxer {
 public:
-    typedef std::shared_ptr<FlvMuxer> Ptr;
+    using Ptr = std::shared_ptr<FlvMuxer>;
     FlvMuxer();
-    virtual ~FlvMuxer();
+    virtual ~FlvMuxer() = default;
+
     void stop();
 
 protected:
-    void start(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &media);
-    virtual void onWrite(const Buffer::Ptr &data, bool flush) = 0;
+    void start(const toolkit::EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &media, uint32_t start_pts = 0);
+    virtual void onWrite(const toolkit::Buffer::Ptr &data, bool flush) = 0;
     virtual void onDetach() = 0;
     virtual std::shared_ptr<FlvMuxer> getSharedPtr() = 0;
 
 private:
-    void onWriteFlvHeader(const RtmpMediaSource::Ptr &media);
+    void onWriteFlvHeader(const RtmpMediaSource::Ptr &src);
     void onWriteRtmp(const RtmpPacket::Ptr &pkt, bool flush);
     void onWriteFlvTag(const RtmpPacket::Ptr &pkt, uint32_t time_stamp, bool flush);
-    void onWriteFlvTag(uint8_t type, const Buffer::Ptr &buffer, uint32_t time_stamp, bool flush);
-    BufferRaw::Ptr obtainBuffer(const void *data, size_t len);
+    void onWriteFlvTag(uint8_t type, const toolkit::Buffer::Ptr &buffer, uint32_t time_stamp, bool flush);
+    toolkit::BufferRaw::Ptr obtainBuffer(const void *data, size_t len);
+    toolkit::BufferRaw::Ptr obtainBuffer();
 
 private:
-    //时间戳修整器
-    Stamp _stamp[2];
+    toolkit::ResourcePool<toolkit::BufferRaw> _packet_pool;
     RtmpMediaSource::RingType::RingReader::Ptr _ring_reader;
 };
 
 class FlvRecorder : public FlvMuxer , public std::enable_shared_from_this<FlvRecorder>{
 public:
-    typedef std::shared_ptr<FlvRecorder> Ptr;
-    FlvRecorder();
-    virtual ~FlvRecorder();
-    void startRecord(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &media, const string &file_path);
-    void startRecord(const EventPoller::Ptr &poller, const string &vhost, const string &app, const string &stream, const string &file_path);
+    using Ptr = std::shared_ptr<FlvRecorder>;
+
+    void startRecord(const toolkit::EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &media, const std::string &file_path);
+    void startRecord(const toolkit::EventPoller::Ptr &poller, const std::string &vhost, const std::string &app, const std::string &stream, const std::string &file_path);
 
 private:
-    virtual void onWrite(const Buffer::Ptr &data, bool flush) override ;
+    virtual void onWrite(const toolkit::Buffer::Ptr &data, bool flush) override ;
     virtual void onDetach() override;
     virtual std::shared_ptr<FlvMuxer> getSharedPtr() override;
 
 private:
     std::shared_ptr<FILE> _file;
-    recursive_mutex _file_mtx;
+    std::recursive_mutex _file_mtx;
 };
-
 
 }//namespace mediakit
 #endif //ZLMEDIAKIT_FLVMUXER_H

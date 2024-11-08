@@ -1,87 +1,55 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #ifndef ZLMEDIAKIT_PSENCODER_H
 #define ZLMEDIAKIT_PSENCODER_H
+
 #if defined(ENABLE_RTPPROXY)
-#include "mpeg-ps.h"
+
+#include "Record/MPEG.h"
 #include "Common/MediaSink.h"
-#include "Common/Stamp.h"
-#include "Extension/CommonRtp.h"
-namespace mediakit{
 
-//该类实现mpeg-ps容器格式的打包
-class PSEncoder : public MediaSinkInterface {
+namespace mediakit {
+
+class CommonRtpEncoder;
+
+class PSEncoderImp : public MpegMuxer {
 public:
-    PSEncoder();
-    ~PSEncoder() override;
-
     /**
-     * 添加音视频轨道
+     * 创建psh或ts rtp编码器
+     * @param ssrc rtp的ssrc
+     * @param payload_type rtp的pt
+     * @param ps_or_ts true: ps, false: ts
+     * Create a psh or ts rtp encoder
+     * @param ssrc rtp's ssrc
+     * @param payload_type rtp's pt
+     * @param ps_or_ts true: ps, false: ts
+     
+     * [AUTO-TRANSLATED:b79d8b65]
      */
-    void addTrack(const Track::Ptr &track) override;
-
-    /**
-     * 重置音视频轨道
-     */
-    void resetTracks() override;
-
-    /**
-     * 输入帧数据
-     */
-    void inputFrame(const Frame::Ptr &frame) override;
-
-protected:
-    /**
-     * 输出mpeg-ps的回调函数
-     * @param stamp 时间戳，毫秒
-     * @param packet 数据指针
-     * @param bytes 数据长度
-     */
-    virtual void onPS(uint32_t stamp, void *packet, size_t bytes) = 0;
-
-private:
-    void init();
-    //音视频时间戳同步用
-    void stampSync();
-
-private:
-    struct track_info {
-        int track_id = -1;
-        Stamp stamp;
-    };
-
-private:
-    uint32_t _timestamp = 0;
-    BufferRaw::Ptr _buffer;
-    List<Frame::Ptr> _frameCached;
-    std::shared_ptr<struct ps_muxer_t> _muxer;
-    unordered_map<int, track_info> _codec_to_trackid;
-};
-
-class PSEncoderImp : public PSEncoder{
-public:
-    PSEncoderImp(uint32_t ssrc, uint8_t payload_type = 96);
+    PSEncoderImp(uint32_t ssrc, uint8_t payload_type = 96, bool ps_or_ts = true);
     ~PSEncoderImp() override;
 
 protected:
-    //rtp打包后回调
-    virtual void onRTP(Buffer::Ptr rtp) = 0;
+    // rtp打包后回调  [AUTO-TRANSLATED:8f88aef9]
+    // Callback after rtp packaging
+    virtual void onRTP(toolkit::Buffer::Ptr rtp, bool is_key = false) = 0;
 
 protected:
-    void onPS(uint32_t stamp, void *packet, size_t bytes) override;
+    void onWrite(std::shared_ptr<toolkit::Buffer> buffer, uint64_t stamp, bool key_pos) override;
 
 private:
     std::shared_ptr<CommonRtpEncoder> _rtp_encoder;
 };
 
 }//namespace mediakit
+
 #endif //ENABLE_RTPPROXY
 #endif //ZLMEDIAKIT_PSENCODER_H

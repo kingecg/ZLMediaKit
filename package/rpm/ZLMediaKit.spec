@@ -2,27 +2,37 @@
 %global use_devtoolset 0
 %bcond_without faac
 %bcond_without x264
+%bcond_without webrtc
 %else
 %global use_devtoolset 1
 %bcond_with faac
 %bcond_with x264
+%bcond_with webrtc
 %endif
 
 %bcond_without openssl
 %bcond_without mysql
 
+# 默认不编译 API
+%bcond_with api
+%bcond_with cxx_api
+
 Name:		ZLMediaKit
-Version:	5.0.0
+Version:	8.0.0
 Release:	1%{?dist}
 Summary:	A lightweight, high performance and stable stream server and client framework based on C++11.
 
 Group:		development
 License:	MIT
-URL:		https://github.com/xia-chu/ZLMediaKit
+URL:		https://github.com/ZLMediaKit/ZLMediaKit
 Source0:	%{name}-%{version}.tar.xz
 
 %if %{with openssl}
+%if 0%{?rhel} <= 7 && %{with webrtc}
+BuildRequires:	openssl11-devel
+%else
 BuildRequires:	openssl-devel
+%endif
 %endif
 
 %if %{with mysql}
@@ -35,6 +45,10 @@ BuildRequires:	faac-devel
 
 %if %{with x264}
 BuildRequires:	x264-devel
+%endif
+
+%if %{with webrtc}
+BuildRequires:	libsrtp-devel >= 2.0
 %endif
 
 %if 0%{?use_devtoolset}
@@ -51,6 +65,7 @@ Summary:	A lightweight, high performance and stable stream server
 %description media-server
 A lightweight RTSP/RTMP/HTTP/HLS/HTTP-FLV/WebSocket-FLV/HTTP-TS/HTTP-fMP4/WebSocket-TS/WebSocket-fMP4/GB28181 server.
 
+%if %{with api}
 %package c-libs
 Requires:	%{name} = %{version}
 Summary:	The %{name} C libraries.
@@ -62,12 +77,15 @@ Requires:	%{name}-c-libs = %{version}
 Summary:	The %{name} C API headers.
 %description c-devel
 The %{name} C API headers.
+%endif
 
+%if %{with cxx_api}
 %package cxx-devel
 Requires:	%{name} = %{version}
 Summary:	The %{name} C++ API headers and development libraries.
 %description cxx-devel
 The %{name} C++ API headers and development libraries.
+%endif
 
 %prep
 %setup -q
@@ -88,10 +106,14 @@ pushd %{_target_platform}
     -DENABLE_MYSQL:BOOL=%{with mysql} \
     -DENABLE_FAAC:BOOL=%{with faac} \
     -DENABLE_X264:BOOL=%{with x264} \
+    -DENABLE_WEBRTC:BOOL=%{with webrtc} \
+%if %{with webrtc} && 0%{?rhel} <= 7
+    -DOPENSSL_ROOT_DIR:STRING="/usr/lib64/openssl11;/usr/include/openssl11" \
+%endif
     -DENABLE_MP4:BOOL=ON \
     -DENABLE_RTPPROXY:BOOL=ON \
-    -DENABLE_API:BOOL=ON \
-    -DENABLE_CXX_API:BOOL=ON \
+    -DENABLE_API:BOOL=%{with api} \
+    -DENABLE_CXX_API:BOOL=%{with cxx_api} \
     -DENABLE_TESTS:BOOL=OFF \
     -DENABLE_SERVERL:BOOL=ON \
     ..
@@ -123,12 +145,15 @@ rm -rf $RPM_BUILD_ROOT
 %files media-server
 %{_bindir}/*
 
+%if %{with api}
 %files c-libs
 %{_libdir}/libmk_api.so
 
 %files c-devel
 %{_includedir}/mk_*
+%endif
 
+%if %{with cxx_api}
 %files cxx-devel
 %{_includedir}/ZLMediaKit/*
 %{_includedir}/ZLToolKit/*
@@ -137,6 +162,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/libmpeg.a
 %{_libdir}/libmov.a
 %{_libdir}/libflv.a
+%endif
 
 %changelog
 

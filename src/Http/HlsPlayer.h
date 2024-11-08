@@ -1,9 +1,9 @@
 ﻿/*
  * Copyright (c) 2020 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -11,146 +11,147 @@
 #ifndef HTTP_HLSPLAYER_H
 #define HTTP_HLSPLAYER_H
 
-#include <unordered_set>
-#include "Util/util.h"
-#include "Poller/Timer.h"
-#include "Http/HttpDownloader.h"
-#include "Player/MediaPlayer.h"
-#include "HlsParser.h"
+#include "Player/PlayerBase.h"
 #include "HttpTSPlayer.h"
-#include "Rtp/Decoder.h"
+#include "HlsParser.h"
 #include "Rtp/TSDecoder.h"
 
-using namespace toolkit;
+#define MIN_TIMEOUT_MULTIPLE 2
+#define MAX_TIMEOUT_MULTIPLE 5
+#define MAX_TRY_FETCH_INDEX_TIMES 5
+#define MAX_TS_DOWNLOAD_FAILED_COUNT 10
+
 namespace mediakit {
+
+class HlsDemuxer : public MediaSinkInterface , public TrackSource, public std::enable_shared_from_this<HlsDemuxer> {
+public:
+    ~HlsDemuxer() override { _timer = nullptr; }
+
+    void start(const toolkit::EventPoller::Ptr &poller, TrackListener *listener);
+    bool inputFrame(const Frame::Ptr &frame) override;
+    bool addTrack(const Track::Ptr &track) override { return _delegate.addTrack(track); }
+    void addTrackCompleted() override { _delegate.addTrackCompleted(); }
+    void resetTracks() override { ((MediaSink &)_delegate).resetTracks(); }
+    std::vector<Track::Ptr> getTracks(bool ready = true) const override { return _delegate.getTracks(ready); }
+    void pushTask(std::function<void()> task);
+
+private:
+    void onTick();
+    int64_t getBufferMS();
+    int64_t getPlayPosition();
+    void setPlayPosition(int64_t pos);
+
+private:
+    int64_t _ticker_offset = 0;
+    toolkit::Ticker _ticker;
+    toolkit::Timer::Ptr _timer;
+    MediaSinkDelegate _delegate;
+    std::deque<std::pair<int64_t, std::function<void()> > > _frame_cache;
+};
 
 class HlsPlayer : public  HttpClientImp , public PlayerBase , public HlsParser{
 public:
-    HlsPlayer(const EventPoller::Ptr &poller);
-    ~HlsPlayer() override;
+    HlsPlayer(const toolkit::EventPoller::Ptr &poller);
 
     /**
      * 开始播放
-     * @param strUrl
+     * start play
+     * Start playing
+     * start play
+     
+     * [AUTO-TRANSLATED:03d41cf7]
      */
-    void play(const string &strUrl) override;
+    void play(const std::string &url) override;
 
     /**
      * 停止播放
+     * stop play
+     * Stop playing
+     * stop play
+     
+     * [AUTO-TRANSLATED:88068dac]
      */
     void teardown() override;
 
 protected:
     /**
      * 收到ts包
-     * @param data ts数据负载
-     * @param len ts包长度
+     * Received ts package
+     * @param data ts数据负载 ts data payload
+     * @param len ts包长度 ts package length
+     * Received ts package
+     * Received ts package
+     * @param data ts data payload
+     * @param len ts package length
+     
+     * [AUTO-TRANSLATED:159a6559]
      */
     virtual void onPacket(const char *data, size_t len) = 0;
 
 private:
-    /**
-     * 解析m3u8成功
-     * @param is_m3u8_inner 是否为m3u8列表
-     * @param sequence ts列表seq
-     * @param ts_map ts列表或m3u8列表
-     */
-    void onParsed(bool is_m3u8_inner,int64_t sequence,const map<int,ts_segment> &ts_map) override;
-    /**
-     * 收到http回复头
-     * @param status 状态码，譬如:200 OK
-     * @param headers http头
-     * @return 返回后续content的长度；-1:后续数据全是content；>=0:固定长度content
-     *          需要指出的是，在http头中带有Content-Length字段时，该返回值无效
-     */
-    ssize_t onResponseHeader(const string &status,const HttpHeader &headers) override;
-    /**
-     * 收到http conten数据
-     * @param buf 数据指针
-     * @param size 数据大小
-     * @param recvedSize 已收数据大小(包含本次数据大小),当其等于totalSize时将触发onResponseCompleted回调
-     * @param totalSize 总数据大小
-     */
-    void onResponseBody(const char *buf,size_t size,size_t recvedSize, size_t totalSize) override;
-
-    /**
-     * 接收http回复完毕,
-     */
-    void onResponseCompleted() override;
-
-    /**
-     * http链接断开回调
-     * @param ex 断开原因
-     */
-    void onDisconnect(const SockException &ex) override;
-
-    /**
-     * 重定向事件
-     * @param url 重定向url
-     * @param temporary 是否为临时重定向
-     * @return 是否继续
-     */
-    bool onRedirectUrl(const string &url,bool temporary) override;
+    bool onParsed(bool is_m3u8_inner, int64_t sequence, const map<int, ts_segment> &ts_map) override;
+    void onResponseHeader(const std::string &status, const HttpHeader &headers) override;
+    void onResponseBody(const char *buf, size_t size) override;
+    void onResponseCompleted(const toolkit::SockException &e) override;
+    bool onRedirectUrl(const std::string &url, bool temporary) override;
 
 private:
-    void playDelay();
+    void playDelay(float delay_sec = 0);
     float delaySecond();
-    void playNextTs(bool force = false);
-    void teardown_l(const SockException &ex);
-    void play_l();
-    void onPacket_l(const char *data, size_t len);
+    void fetchSegment();
+    void teardown_l(const toolkit::SockException &ex);
+    void fetchIndexFile();
 
 private:
     struct UrlComp {
-        //url忽略？后面的参数
-        bool operator()(const string& __x, const string& __y) const {
-            return split(__x,"?")[0] < split(__y,"?")[0];
+        // url忽略？后面的参数  [AUTO-TRANSLATED:788784c3]
+        // url ignore? parameters after
+        // Ignore the parameters after the url?
+        bool operator()(const std::string& __x, const std::string& __y) const {
+            return toolkit::split(__x,"?")[0] < toolkit::split(__y,"?")[0];
         }
     };
 
 private:
-    bool _is_m3u8 = false;
-    bool _first = true;
+    bool _play_result = false;
     int64_t _last_sequence = -1;
-    string _m3u8;
-    Timer::Ptr _timer;
-    Timer::Ptr _timer_ts;
-    list<ts_segment> _ts_list;
-    list<string> _ts_url_sort;
-    list<string> _m3u8_list;
-    set<string, UrlComp> _ts_url_cache;
+    std::string _m3u8;
+    std::string _play_url;
+    toolkit::Timer::Ptr _timer;
+    toolkit::Timer::Ptr _timer_ts;
+    toolkit::Ticker _wait_index_update_ticker;
+    std::list<ts_segment> _ts_list;
+    std::list<std::string> _ts_url_sort;
+    std::set<std::string, UrlComp> _ts_url_cache;
     HttpTSPlayer::Ptr _http_ts_player;
-    TSSegment _segment;
+    int _timeout_multiple = MIN_TIMEOUT_MULTIPLE;
+    int _try_fetch_index_times = 0;
+    int _ts_download_failed_count = 0;
 };
 
-class HlsPlayerImp : public PlayerImp<HlsPlayer, PlayerBase> , public MediaSink{
+class HlsPlayerImp : public PlayerImp<HlsPlayer, PlayerBase>, private TrackListener {
 public:
-    typedef std::shared_ptr<HlsPlayerImp> Ptr;
-    HlsPlayerImp(const EventPoller::Ptr &poller = nullptr);
-    ~HlsPlayerImp() override {};
-    void setOnPacket(const TSSegment::onSegment &cb);
+    using Ptr = std::shared_ptr<HlsPlayerImp>;
+    HlsPlayerImp(const toolkit::EventPoller::Ptr &poller = nullptr);
 
 private:
+    //// HlsPlayer override////
     void onPacket(const char *data, size_t len) override;
-    void onAllTrackReady() override;
-    void onPlayResult(const SockException &ex) override;
-    vector<Track::Ptr> getTracks(bool trackReady = true) const override;
-    void inputFrame(const Frame::Ptr &frame) override;
-    void onShutdown(const SockException &ex) override;
-    void onTick();
-
-    int64_t getPlayPosition();
-    void setPlayPosition(int64_t pos);
-    int64_t getBufferMS();
 
 private:
-    int64_t _ticker_offset = 0;
-    Ticker _ticker;
-    Stamp _stamp[2];
-    Timer::Ptr _timer;
+    //// PlayerBase override////
+    void onPlayResult(const toolkit::SockException &ex) override;
+    std::vector<Track::Ptr> getTracks(bool ready = true) const override;
+    void onShutdown(const toolkit::SockException &ex) override;
+
+private:
+    //// TrackListener override////
+    bool addTrack(const Track::Ptr &track) override { return true; };
+    void addTrackCompleted() override;
+
+private:
     DecoderImp::Ptr _decoder;
-    TSSegment::onSegment _on_ts;
-    multimap<int64_t, Frame::Ptr> _frame_cache;
+    MediaSinkInterface::Ptr _demuxer;
 };
 
 }//namespace mediakit 

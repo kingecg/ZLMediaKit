@@ -1,82 +1,53 @@
-﻿execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/ssl.p12 ${EXECUTABLE_OUTPUT_PATH}/)
-
-#查找SDL2是否安装
-find_package(SDL2 QUIET)
-if (SDL2_FOUND)
-    include_directories(${SDL2_INCLUDE_DIR})
-    list(APPEND LINK_LIB_LIST ${SDL2_LIBRARY})
-    message(STATUS "found library:${SDL2_LIBRARY}")
-endif (SDL2_FOUND)
-
-find_package(PkgConfig QUIET)
-
-#查找ffmpeg/libutil是否安装
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(AVUTIL QUIET IMPORTED_TARGET libavutil)
-    if(AVUTIL_FOUND)
-        include_directories(${AVUTIL_INCLUDE_DIRS})
-        link_directories(${AVUTIL_LIBRARY_DIRS})
-        list(APPEND  LINK_LIB_LIST ${AVUTIL_LIBRARIES})
-        message(STATUS "found library:${AVUTIL_LIBRARIES}")
-    endif()
-else()
-    find_package(AVUTIL QUIET)
-    if(AVUTIL_FOUND)
-        include_directories(${AVUTIL_INCLUDE_DIR})
-        list(APPEND  LINK_LIB_LIST ${AVUTIL_LIBRARIES})
-        message(STATUS "found library:${AVUTIL_LIBRARIES}")
-    endif()
-endif()
-
-#查找ffmpeg/libavcodec是否安装
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(AVCODEC QUIET IMPORTED_TARGET libavcodec)
-    if(AVCODEC_FOUND)
-        include_directories(${AVCODEC_INCLUDE_DIRS})
-        link_directories(${AVCODEC_LIBRARY_DIRS})
-        list(APPEND  LINK_LIB_LIST ${AVCODEC_LIBRARIES})
-        message(STATUS "found library:${AVCODEC_LIBRARIES}")
-    endif()
-else()
-    find_package(AVCODEC QUIET)
-    if(AVCODEC_FOUND)
-        include_directories(${AVCODEC_INCLUDE_DIR})
-        list(APPEND  LINK_LIB_LIST ${AVCODEC_LIBRARIES})
-        message(STATUS "found library:${AVCODEC_LIBRARIES}")
-    endif()
-endif()
+﻿# MIT License
+#
+# Copyright (c) 2016-2022 The ZLMediaKit project authors. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
 
 aux_source_directory(. TEST_SRC_LIST)
-#如果ffmpeg/libavcodec ffmpeg/libavcodec SDL 都安装了则编译 test_player
-if(SDL2_FOUND AND AVCODEC_FOUND AND AVUTIL_FOUND)
-else()
-    message(STATUS "test_player ingored, please install sdl2 ffmpeg/libavcodec ffmpeg/libavutil")
-    list(REMOVE_ITEM TEST_SRC_LIST ./test_player.cpp)
-endif()
 
 foreach(TEST_SRC ${TEST_SRC_LIST})
-    STRING(REGEX REPLACE "^\\./|\\.c[a-zA-Z0-9_]*$" "" TEST_EXE_NAME ${TEST_SRC})
-    message(STATUS "add test:${TEST_EXE_NAME}")
-    add_executable(${TEST_EXE_NAME} ${TEST_SRC})
+  get_filename_component(TEST_EXE_NAME ${TEST_SRC} NAME_WE)
 
-	if(WIN32)
-		set_target_properties(${TEST_EXE_NAME} PROPERTIES COMPILE_FLAGS ${VS_FALGS} )
-	endif(WIN32)
-    target_link_libraries(${TEST_EXE_NAME} ${LINK_LIB_LIST})
+  if(NOT TARGET ZLMediaKit::WebRTC)
+    # 暂时过滤掉依赖 WebRTC 的测试模块
+    if("${TEST_EXE_NAME}" MATCHES "test_rtcp_nack")
+      continue()
+    endif()
+  endif()
+
+  message(STATUS "add test: ${TEST_EXE_NAME}")
+  add_executable(${TEST_EXE_NAME} ${TEST_SRC})
+  target_compile_options(${TEST_EXE_NAME}
+    PRIVATE ${COMPILE_OPTIONS_DEFAULT})
+
+  target_compile_definitions(${TEST_EXE_NAME}
+    PRIVATE ${MK_COMPILE_DEFINITIONS})
+
+  if(USE_SOLUTION_FOLDERS)
+    SET_PROPERTY(TARGET ${TEST_EXE_NAME} PROPERTY FOLDER "test")
+  endif()
+
+  if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+    target_link_libraries(${TEST_EXE_NAME} -Wl,--start-group ${MK_LINK_LIBRARIES} -Wl,--end-group)
+  else()
+    target_link_libraries(${TEST_EXE_NAME} ${MK_LINK_LIBRARIES})
+  endif()
 endforeach()
-
-if(MSVC AND SDL2_FOUND AND AVCODEC_FOUND AND AVUTIL_FOUND)
-    set_target_properties(test_player PROPERTIES LINK_FLAGS "/SAFESEH:NO /SUBSYSTEM:WINDOWS" )
-endif()
-
-
-
-
-
-
-
-
-
-
-
-

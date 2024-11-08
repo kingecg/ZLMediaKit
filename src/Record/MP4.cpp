@@ -1,110 +1,24 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifdef ENABLE_MP4
+#if defined(ENABLE_MP4)
+
 #include "MP4.h"
 #include "Util/File.h"
 #include "Util/logger.h"
 #include "Common/config.h"
-#include "fmp4-writer.h"
 
 using namespace toolkit;
+using namespace std;
+
 namespace mediakit {
-
-/////////////////////////////////////////////////mp4_writer_t/////////////////////////////////////////////////
-
-struct mp4_writer_t {
-    int is_fmp4;
-    union {
-        fmp4_writer_t *fmp4;
-        mov_writer_t *mov;
-    } u;
-};
-
-mp4_writer_t* mp4_writer_create(int is_fmp4, const struct mov_buffer_t *buffer, void* param, int flags){
-    mp4_writer_t *mp4 = (mp4_writer_t *) malloc(sizeof(mp4_writer_t));
-    mp4->is_fmp4 = is_fmp4;
-    if (is_fmp4) {
-        mp4->u.fmp4 = fmp4_writer_create(buffer, param, flags);
-    } else {
-        mp4->u.mov = mov_writer_create(buffer, param, flags);
-    }
-    return mp4;
-}
-
-void mp4_writer_destroy(mp4_writer_t* mp4){
-    if (mp4->is_fmp4) {
-        fmp4_writer_destroy(mp4->u.fmp4);
-    } else {
-        mov_writer_destroy(mp4->u.mov);
-    }
-    free(mp4);
-}
-
-int mp4_writer_add_audio(mp4_writer_t* mp4, uint8_t object, int channel_count, int bits_per_sample, int sample_rate, const void* extra_data, size_t extra_data_size){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_add_audio(mp4->u.fmp4, object, channel_count, bits_per_sample, sample_rate, extra_data, extra_data_size);
-    } else {
-        return mov_writer_add_audio(mp4->u.mov, object, channel_count, bits_per_sample, sample_rate, extra_data, extra_data_size);
-    }
-}
-
-int mp4_writer_add_video(mp4_writer_t* mp4, uint8_t object, int width, int height, const void* extra_data, size_t extra_data_size){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_add_video(mp4->u.fmp4, object, width, height, extra_data, extra_data_size);
-    } else {
-        return mov_writer_add_video(mp4->u.mov, object, width, height, extra_data, extra_data_size);
-    }
-}
-
-int mp4_writer_add_subtitle(mp4_writer_t* mp4, uint8_t object, const void* extra_data, size_t extra_data_size){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_add_subtitle(mp4->u.fmp4, object, extra_data, extra_data_size);
-    } else {
-        return mov_writer_add_subtitle(mp4->u.mov, object, extra_data, extra_data_size);
-    }
-}
-
-int mp4_writer_write(mp4_writer_t* mp4, int track, const void* data, size_t bytes, int64_t pts, int64_t dts, int flags){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_write(mp4->u.fmp4, track, data, bytes, pts, dts, flags);
-    } else {
-        return mov_writer_write(mp4->u.mov, track, data, bytes, pts, dts, flags);
-    }
-}
-
-int mp4_writer_write_l(mp4_writer_t* mp4, int track, const void* data, size_t bytes, int64_t pts, int64_t dts, int flags, int add_nalu_size){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_write_l(mp4->u.fmp4, track, data, bytes, pts, dts, flags, add_nalu_size);
-    } else {
-        return mov_writer_write_l(mp4->u.mov, track, data, bytes, pts, dts, flags, add_nalu_size);
-    }
-}
-
-int mp4_writer_save_segment(mp4_writer_t* mp4){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_save_segment(mp4->u.fmp4);
-    } else {
-        return -1;
-    }
-}
-
-int mp4_writer_init_segment(mp4_writer_t* mp4){
-    if (mp4->is_fmp4) {
-        return fmp4_writer_init_segment(mp4->u.fmp4);
-    } else {
-        return -1;
-    }
-}
-
-/////////////////////////////////////////////////MP4FileIO/////////////////////////////////////////////////
 
 static struct mov_buffer_t s_io = {
         [](void *ctx, void *data, uint64_t bytes) {
@@ -115,20 +29,21 @@ static struct mov_buffer_t s_io = {
             MP4FileIO *thiz = (MP4FileIO *) ctx;
             return thiz->onWrite(data, bytes);
         },
-        [](void *ctx, uint64_t offset) {
+        [](void *ctx, int64_t offset) {
             MP4FileIO *thiz = (MP4FileIO *) ctx;
             return thiz->onSeek(offset);
         },
         [](void *ctx) {
             MP4FileIO *thiz = (MP4FileIO *) ctx;
-            return (uint64_t)thiz->onTell();
+            return (int64_t)thiz->onTell();
         }
 };
 
 MP4FileIO::Writer MP4FileIO::createWriter(int flags, bool is_fmp4){
     Writer writer;
     Ptr self = shared_from_this();
-    //保存自己的强引用，防止提前释放
+    // 保存自己的强引用，防止提前释放  [AUTO-TRANSLATED:e8e14f60]
+    // Save a strong reference to itself to prevent premature release
     writer.reset(mp4_writer_create(is_fmp4, &s_io,this, flags),[self](mp4_writer_t *ptr){
         if(ptr){
             mp4_writer_destroy(ptr);
@@ -143,7 +58,8 @@ MP4FileIO::Writer MP4FileIO::createWriter(int flags, bool is_fmp4){
 MP4FileIO::Reader MP4FileIO::createReader(){
     Reader reader;
     Ptr self = shared_from_this();
-    //保存自己的强引用，防止提前释放
+    // 保存自己的强引用，防止提前释放  [AUTO-TRANSLATED:e8e14f60]
+    // Save a strong reference to itself to prevent premature release
     reader.reset(mov_reader_create(&s_io,this),[self](mov_reader_t *ptr){
         if(ptr){
             mov_reader_destroy(ptr);
@@ -166,7 +82,8 @@ MP4FileIO::Reader MP4FileIO::createReader(){
 #endif
 
 void MP4FileDisk::openFile(const char *file, const char *mode) {
-    //创建文件
+    // 创建文件  [AUTO-TRANSLATED:bd145ed5]
+    // Create a file
     auto fp = File::create_file(file, mode);
     if(!fp){
         throw std::runtime_error(string("打开文件失败:") + file);
@@ -174,7 +91,8 @@ void MP4FileDisk::openFile(const char *file, const char *mode) {
 
     GET_CONFIG(uint32_t,mp4BufSize,Record::kFileBufSize);
 
-    //新建文件io缓存
+    // 新建文件io缓存  [AUTO-TRANSLATED:fda9ff47]
+    // Create a new file io cache
     std::shared_ptr<char> file_buf(new char[mp4BufSize],[](char *ptr){
         if(ptr){
             delete [] ptr;
@@ -182,11 +100,13 @@ void MP4FileDisk::openFile(const char *file, const char *mode) {
     });
 
     if(file_buf){
-        //设置文件io缓存
+        // 设置文件io缓存  [AUTO-TRANSLATED:0ed9c8ad]
+        // Set the file io cache
         setvbuf(fp, file_buf.get(), _IOFBF, mp4BufSize);
     }
 
-    //创建智能指针
+    // 创建智能指针  [AUTO-TRANSLATED:e7920ab2]
+    // Create a smart pointer
     _file.reset(fp,[file_buf](FILE *fp) {
         fflush(fp);
         fclose(fp);
@@ -208,11 +128,11 @@ int MP4FileDisk::onWrite(const void *data, size_t bytes) {
     return bytes == fwrite(data, 1, bytes, _file.get()) ? 0 : ferror(_file.get());
 }
 
-int MP4FileDisk::onSeek(size_t offset) {
+int MP4FileDisk::onSeek(uint64_t offset) {
     return fseek64(_file.get(), offset, SEEK_SET);
 }
 
-size_t MP4FileDisk::onTell() {
+uint64_t MP4FileDisk::onTell() {
     return ftell64(_file.get());
 }
 
@@ -229,11 +149,11 @@ size_t MP4FileMemory::fileSize() const{
     return _memory.size();
 }
 
-size_t MP4FileMemory::onTell(){
+uint64_t MP4FileMemory::onTell(){
     return _offset;
 }
 
-int MP4FileMemory::onSeek(size_t offset){
+int MP4FileMemory::onSeek(uint64_t offset){
     if (offset > _memory.size()) {
         return -1;
     }
@@ -254,7 +174,8 @@ int MP4FileMemory::onRead(void *data, size_t bytes){
 
 int MP4FileMemory::onWrite(const void *data, size_t bytes){
     if (_offset + bytes > _memory.size()) {
-        //需要扩容
+        // 需要扩容  [AUTO-TRANSLATED:211c91e3]
+        // Need to expand
         _memory.resize(_offset + bytes);
     }
     memcpy((uint8_t *) _memory.data() + _offset, data, bytes);
@@ -263,4 +184,4 @@ int MP4FileMemory::onWrite(const void *data, size_t bytes){
 }
 
 }//namespace mediakit
-#endif //NABLE_MP4RECORD
+#endif // defined(ENABLE_MP4)

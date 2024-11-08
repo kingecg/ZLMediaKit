@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -13,58 +13,71 @@
 
 #include <mutex>
 #include <memory>
-#include "Player/PlayerBase.h"
-#include "Util/util.h"
-#include "Util/logger.h"
-#include "Util/TimeTicker.h"
-#include "Util/TimeTicker.h"
 #include "Common/MediaSink.h"
+#include "Record/Recorder.h"
 #include "MP4Muxer.h"
-
-using namespace toolkit;
 
 namespace mediakit {
 
 #ifdef ENABLE_MP4
-class MP4Recorder : public MediaSinkInterface{
-public:
-    typedef std::shared_ptr<MP4Recorder> Ptr;
+class MP4Muxer;
 
-    MP4Recorder(const string &strPath,
-                const string &strVhost,
-                const string &strApp,
-                const string &strStreamId,
-                size_t max_second);
-    virtual ~MP4Recorder();
+class MP4Recorder final : public MediaSinkInterface {
+public:
+    using Ptr = std::shared_ptr<MP4Recorder>;
+
+    MP4Recorder(const MediaTuple &tuple, const std::string &path, size_t max_second);
+    ~MP4Recorder() override;
 
     /**
      * 重置所有Track
+     * Reset all Tracks
+     
+     * [AUTO-TRANSLATED:8dd80826]
      */
     void resetTracks() override;
 
     /**
      * 输入frame
+     * Input frame
+     
+     * [AUTO-TRANSLATED:3722ea0e]
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     * Refresh output all frame cache
+     
+     * [AUTO-TRANSLATED:adaea568]
+     */
+    void flush() override;
 
     /**
      * 添加ready状态的track
+     * Add ready state track
+     
+     
+     * [AUTO-TRANSLATED:2d8138b3]
      */
-    void addTrack(const Track::Ptr & track) override;
+    bool addTrack(const Track::Ptr & track) override;
+
 private:
     void createFile();
     void closeFile();
     void asyncClose();
+
 private:
-    bool _haveVideo = false;
+    bool _have_video = false;
     size_t _max_second;
-    string _strPath;
-    string _strFile;
-    string _strFileTmp;
-    Ticker _createFileTicker;
+    uint64_t _last_dts = 0;
+    uint64_t _file_index = 0;
+    std::string _folder_path;
+    std::string _full_path;
+    std::string _full_path_tmp;
     RecordInfo _info;
     MP4Muxer::Ptr _muxer;
-    list<Track::Ptr> _tracks;
+    std::list<Track::Ptr> _tracks;
 };
 
 #endif ///ENABLE_MP4

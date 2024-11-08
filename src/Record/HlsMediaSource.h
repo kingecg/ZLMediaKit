@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -11,104 +11,103 @@
 #ifndef ZLMEDIAKIT_HLSMEDIASOURCE_H
 #define ZLMEDIAKIT_HLSMEDIASOURCE_H
 
-#include <atomic>
-#include "Util/TimeTicker.h"
 #include "Common/MediaSource.h"
-namespace mediakit{
+#include "Util/TimeTicker.h"
+#include "Util/RingBuffer.h"
+#include <atomic>
+
+namespace mediakit {
 
 class HlsMediaSource : public MediaSource {
 public:
     friend class HlsCookieData;
-    typedef RingBuffer<string> RingType;
-    typedef std::shared_ptr<HlsMediaSource> Ptr;
-    HlsMediaSource(const string &vhost, const string &app, const string &stream_id) : MediaSource(HLS_SCHEMA, vhost, app, stream_id){}
-    ~HlsMediaSource() override = default;
+
+    using RingType = toolkit::RingBuffer<std::string>;
+    using Ptr = std::shared_ptr<HlsMediaSource>;
+
+    HlsMediaSource(const std::string &schema, const MediaTuple &tuple) : MediaSource(schema, tuple) {}
 
     /**
      * 	获取媒体源的环形缓冲
+     * 	Get the circular buffer of the media source
+     
+     * [AUTO-TRANSLATED:75ac76b6]
      */
-    const RingType::Ptr &getRing() const {
-        return _ring;
-    }
+    const RingType::Ptr &getRing() const { return _ring; }
 
     /**
      * 获取播放器个数
+     * Get the number of players
+     
+     * [AUTO-TRANSLATED:a451c846]
      */
-    int readerCount() override {
-        return _ring ? _ring->readerCount() : 0;
-    }
+    int readerCount() override { return _ring ? _ring->readerCount() : 0; }
 
     /**
-     * 生成m3u8文件时触发
-     * @param file_created 是否产生了hls文件
+     * 设置或清空m3u8索引文件内容
+     * Set or clear the m3u8 index file content
+     
+     * [AUTO-TRANSLATED:71db921d]
      */
-    void registHls(bool file_created){
-        if (!_is_regist) {
-            _is_regist = true;
-            weak_ptr<HlsMediaSource> weakSelf = dynamic_pointer_cast<HlsMediaSource>(shared_from_this());
-            auto lam = [weakSelf](int size) {
-                auto strongSelf = weakSelf.lock();
-                if (!strongSelf) {
-                    return;
-                }
-                strongSelf->onReaderChanged(size);
-            };
-            _ring = std::make_shared<RingType>(0, std::move(lam));
-            onReaderChanged(0);
-            regist();
-        }
+    void setIndexFile(std::string index_file);
 
-        if (!file_created) {
-            //没产生文件
-            return;
-        }
-        //m3u8文件生成，发送给播放器
-        decltype(_list_cb) copy;
-        {
-            lock_guard<mutex> lck(_mtx_cb);
-            copy.swap(_list_cb);
-        }
-        copy.for_each([](const function<void()> &cb) {
-            cb();
-        });
+    /**
+     * 异步获取m3u8文件
+     * Asynchronously get the m3u8 file
+     
+     * [AUTO-TRANSLATED:e962b3ad]
+     */
+    void getIndexFile(std::function<void(const std::string &str)> cb);
+
+    /**
+     * 同步获取m3u8文件
+     * Synchronously get the m3u8 file
+     
+     
+     * [AUTO-TRANSLATED:52b228df]
+     */
+    std::string getIndexFile() const {
+        std::lock_guard<std::mutex> lck(_mtx_index);
+        return _index_file;
     }
 
-    void waitForFile(function<void()> cb) {
-        //等待生成m3u8文件
-        lock_guard<mutex> lck(_mtx_cb);
-        _list_cb.emplace_back(std::move(cb));
-    }
+    void onSegmentSize(size_t bytes) { _speed[TrackVideo] += bytes; }
 
-    void onSegmentSize(size_t bytes) {
-        _speed[TrackVideo] += bytes;
+    void getPlayerList(const std::function<void(const std::list<toolkit::Any> &info_list)> &cb,
+                       const std::function<toolkit::Any(toolkit::Any &&info)> &on_change) override {
+        _ring->getInfoList(cb, on_change);
     }
 
 private:
-    bool _is_regist = false;
     RingType::Ptr _ring;
-    mutex _mtx_cb;
-    List<function<void()> > _list_cb;
+    std::string _index_file;
+    mutable std::mutex _mtx_index;
+    toolkit::List<std::function<void(const std::string &)>> _list_cb;
 };
 
-class HlsCookieData{
+class HlsCookieData {
 public:
-    typedef std::shared_ptr<HlsCookieData> Ptr;
-    HlsCookieData(const MediaInfo &info, const std::shared_ptr<SockInfo> &sock_info);
+    using Ptr = std::shared_ptr<HlsCookieData>;
+
+    HlsCookieData(const MediaInfo &info, const std::shared_ptr<toolkit::SockInfo> &sock_info);
     ~HlsCookieData();
+
     void addByteUsage(size_t bytes);
+    void setMediaSource(const HlsMediaSource::Ptr &src);
+    HlsMediaSource::Ptr getMediaSource() const;
 
 private:
     void addReaderCount();
 
 private:
-    atomic<uint64_t> _bytes {0};
+    std::atomic<uint64_t> _bytes { 0 };
     MediaInfo _info;
     std::shared_ptr<bool> _added;
-    Ticker _ticker;
-    std::shared_ptr<SockInfo> _sock_info;
+    toolkit::Ticker _ticker;
+    std::weak_ptr<HlsMediaSource> _src;
+    std::shared_ptr<toolkit::SockInfo> _sock_info;
     HlsMediaSource::RingType::RingReader::Ptr _ring_reader;
 };
 
-
-}//namespace mediakit
-#endif //ZLMEDIAKIT_HLSMEDIASOURCE_H
+} // namespace mediakit
+#endif // ZLMEDIAKIT_HLSMEDIASOURCE_H

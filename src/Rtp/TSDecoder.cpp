@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -15,8 +15,8 @@ bool TSSegment::isTSPacket(const char *data, size_t len){
     return len == TS_PACKET_SIZE && ((uint8_t*)data)[0] == TS_SYNC_BYTE;
 }
 
-void TSSegment::setOnSegment(const TSSegment::onSegment &cb) {
-    _onSegment = cb;
+void TSSegment::setOnSegment(TSSegment::onSegment cb) {
+    _onSegment = std::move(cb);
 }
 
 ssize_t TSSegment::onRecvHeader(const char *data, size_t len) {
@@ -35,7 +35,8 @@ const char *TSSegment::onSearchPacketTail(const char *data, size_t len) {
         }
         return nullptr;
     }
-    //下一个包头
+    // 下一个包头  [AUTO-TRANSLATED:c653c49d]
+    // Next packet header
     if (((uint8_t *) data)[_size] == TS_SYNC_BYTE) {
         return data + _size;
     }
@@ -43,6 +44,13 @@ const char *TSSegment::onSearchPacketTail(const char *data, size_t len) {
     if (pos) {
         return (char *) pos;
     }
+    if (remainDataSize() > 4 * _size) {
+        // 数据这么多都没ts包，全部清空  [AUTO-TRANSLATED:95bece98]
+        // So much data but no ts packets, clear all
+        return data + len;
+    }
+    // 等待更多数据  [AUTO-TRANSLATED:b47fbc81]
+    // Wait for more data
     return nullptr;
 }
 
@@ -56,8 +64,12 @@ TSDecoder::TSDecoder() : _ts_segment() {
     });
     _demuxer_ctx = ts_demuxer_create([](void* param, int program, int stream, int codecid, int flags, int64_t pts, int64_t dts, const void* data, size_t bytes){
         TSDecoder *thiz = (TSDecoder*)param;
-        if(thiz->_on_decode){
-            thiz->_on_decode(stream,codecid,flags,pts,dts,data,bytes);
+        if (thiz->_on_decode) {
+            if (flags & MPEG_FLAG_PACKET_CORRUPT) {
+                WarnL << "ts packet lost, dts:" << dts << " pts:" << pts << " bytes:" << bytes;
+            } else {
+                thiz->_on_decode(stream, codecid, flags, pts, dts, data, bytes);
+            }
         }
         return 0;
     },this);
@@ -81,16 +93,15 @@ ssize_t TSDecoder::input(const uint8_t *data, size_t bytes) {
     if (TSSegment::isTSPacket((char *)data, bytes)) {
         return ts_demuxer_input(_demuxer_ctx, (uint8_t *) data, bytes);
     }
-    _ts_segment.input((char*)data,bytes);
+    try {
+        _ts_segment.input((char *) data, bytes);
+    } catch (...) {
+        // ts解析失败，清空缓存数据  [AUTO-TRANSLATED:18b3de5b]
+        // ts parsing failed, clear cache data
+        _ts_segment.reset();
+        throw;
+    }
     return bytes;
-}
-
-void TSDecoder::setOnDecode(Decoder::onDecode cb) {
-    _on_decode = std::move(cb);
-}
-
-void TSDecoder::setOnStream(Decoder::onStream cb) {
-    _on_stream = std::move(cb);
 }
 
 #endif//defined(ENABLE_HLS)

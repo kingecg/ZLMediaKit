@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -12,6 +12,7 @@
 #include "MediaPusher.h"
 #include "PusherBase.h"
 
+using namespace std;
 using namespace toolkit;
 
 namespace mediakit {
@@ -30,9 +31,6 @@ MediaPusher::MediaPusher(const string &schema,
         MediaPusher(MediaSource::find(schema, vhost, app, stream), poller){
 }
 
-MediaPusher::~MediaPusher() {
-}
-
 static void setOnCreateSocket_l(const std::shared_ptr<PusherBase> &delegate, const Socket::onCreateSocket &cb){
     auto helper = dynamic_pointer_cast<SocketHelper>(delegate);
     if (helper) {
@@ -44,10 +42,11 @@ void MediaPusher::publish(const string &url) {
     _delegate = PusherBase::createPusher(_poller, _src.lock(), url);
     assert(_delegate);
     setOnCreateSocket_l(_delegate, _on_create_socket);
-    _delegate->setOnShutdown(_shutdownCB);
-    _delegate->setOnPublished(_publishCB);
+    _delegate->setOnShutdown(_on_shutdown);
+    _delegate->setOnPublished(_on_publish);
     _delegate->mINI::operator=(*this);
     _delegate->publish(url);
+    _url = url;
 }
 
 EventPoller::Ptr MediaPusher::getPoller(){

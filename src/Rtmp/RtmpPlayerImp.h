@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -19,19 +19,97 @@
 #include "RtmpDemuxer.h"
 #include "Poller/Timer.h"
 #include "Util/TimeTicker.h"
-using namespace toolkit;
-using namespace mediakit::Client;
 
 namespace mediakit {
 
-class RtmpPlayerImp: public PlayerImp<RtmpPlayer,RtmpDemuxer> {
+template<typename Parent>
+class FlvPlayerBase: public PlayerImp<Parent,PlayerBase>, private TrackListener {
 public:
-    typedef std::shared_ptr<RtmpPlayerImp> Ptr;
+    using Ptr = std::shared_ptr<FlvPlayerBase>;
+    using Super = PlayerImp<Parent, PlayerBase>;
 
-    RtmpPlayerImp(const EventPoller::Ptr &poller) : PlayerImp<RtmpPlayer, RtmpDemuxer>(poller) {};
+    FlvPlayerBase(const toolkit::EventPoller::Ptr &poller) : Super(poller) {};
+
+    ~FlvPlayerBase() override {
+        DebugL << std::endl;
+    }
+
+    float getDuration() const override {
+        return _demuxer ? _demuxer->getDuration() : 0;
+    }
+
+    std::vector<Track::Ptr> getTracks(bool ready = true) const override {
+        return _demuxer ? _demuxer->getTracks(ready) : Super::getTracks(ready);
+    }
+
+private:
+    // 派生类回调函数  [AUTO-TRANSLATED:61e20903]
+    // Derived class callback function
+    bool onMetadata(const AMFValue &val) override {
+        // 无metadata或metadata中无track信息时，需要从数据包中获取track  [AUTO-TRANSLATED:92a71803]
+        // When there is no metadata or no track information in the metadata, it is necessary to obtain the track from the data packet
+        _wait_track_ready = this->Super::operator[](Client::kWaitTrackReady).template as<bool>() || RtmpDemuxer::trackCount(val) == 0;
+        onCheckMeta_l(val);
+        return true;
+    }
+
+    void onRtmpPacket(RtmpPacket::Ptr chunkData) override {
+        if (!_demuxer) {
+            // 有些rtmp流没metadata  [AUTO-TRANSLATED:2509786f]
+            // Some rtmp streams do not have metadata
+            onCheckMeta_l(TitleMeta().getMetadata());
+        }
+        _demuxer->inputRtmp(chunkData);
+        if (_rtmp_src) {
+            _rtmp_src->onWrite(std::move(chunkData));
+        }
+    }
+
+    void onPlayResult(const toolkit::SockException &ex) override {
+        if (!_wait_track_ready || ex) {
+            Super::onPlayResult(ex);
+            return;
+        }
+    }
+
+    bool addTrack(const Track::Ptr &track) override { return true; }
+
+    void addTrackCompleted() override {
+        if (_wait_track_ready) {
+            Super::onPlayResult(toolkit::SockException(toolkit::Err_success, "play success"));
+        }
+    }
+
+private:
+    void onCheckMeta_l(const AMFValue &val) {
+        _rtmp_src = std::dynamic_pointer_cast<RtmpMediaSource>(this->Super::_media_src);
+        if (_rtmp_src) {
+            _rtmp_src->setMetaData(val);
+        }
+        if(_demuxer){
+            return;
+        }
+        _demuxer = std::make_shared<RtmpDemuxer>();
+        //TraceL<<" _wait_track_ready "<<_wait_track_ready;
+        _demuxer->setTrackListener(this, _wait_track_ready);
+        _demuxer->loadMetaData(val);
+    }
+
+private:
+    bool _wait_track_ready = true;
+    RtmpDemuxer::Ptr _demuxer;
+    RtmpMediaSource::Ptr _rtmp_src;
+};
+
+class RtmpPlayerImp: public FlvPlayerBase<RtmpPlayer> {
+public:
+    using Ptr = std::shared_ptr<RtmpPlayerImp>;
+    using Super = FlvPlayerBase<RtmpPlayer>;
+
+    RtmpPlayerImp(const toolkit::EventPoller::Ptr &poller) : Super(poller) {};
 
     ~RtmpPlayerImp() override {
-        DebugL << endl;
+        DebugL;
     }
 
     float getProgress() const override {
@@ -46,42 +124,10 @@ public:
         seekToMilliSecond((uint32_t)(fProgress * getDuration() * 1000));
     }
 
-    void play(const string &strUrl) override {
-        PlayerImp<RtmpPlayer, RtmpDemuxer>::play(strUrl);
+    void seekTo(uint32_t seekPos) override {
+        uint32_t pos = MAX(float(0), MIN(seekPos, getDuration())) * 1000;
+        seekToMilliSecond(pos);
     }
-
-private:
-    //派生类回调函数
-    bool onCheckMeta(const AMFValue &val) override {
-        _rtmp_src = dynamic_pointer_cast<RtmpMediaSource>(_pMediaSrc);
-        if (_rtmp_src) {
-            _rtmp_src->setMetaData(val);
-            _set_meta_data = true;
-        }
-        _delegate.reset(new RtmpDemuxer);
-        _delegate->loadMetaData(val);
-        return true;
-    }
-
-    void onMediaData(RtmpPacket::Ptr chunkData) override {
-        if (!_delegate) {
-            //这个流没有metadata
-            _delegate.reset(new RtmpDemuxer());
-        }
-        _delegate->inputRtmp(chunkData);
-
-        if (_rtmp_src) {
-            if (!_set_meta_data && !chunkData->isCfgFrame()) {
-                _set_meta_data = true;
-                _rtmp_src->setMetaData(TitleMeta().getMetadata());
-            }
-            _rtmp_src->onWrite(std::move(chunkData));
-        }
-    }
-
-private:
-    RtmpMediaSource::Ptr _rtmp_src;
-    bool _set_meta_data = false;
 };
 
 
