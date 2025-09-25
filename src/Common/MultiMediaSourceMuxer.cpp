@@ -11,6 +11,7 @@
 #include <math.h>
 #include "Common/config.h"
 #include "MultiMediaSourceMuxer.h"
+#include "Thread/WorkThreadPool.h"
 
 using namespace std;
 using namespace toolkit;
@@ -62,32 +63,38 @@ public:
             setCurrentStamp(frame->dts());
             resetTimer(EventPoller::getCurrentPoller());
         }
-
-        _cache.emplace_back(frame->dts() + _cache_ms, Frame::getCacheAbleFrame(frame));
+        auto &last_dts = _last_dts[frame->getTrackType()];
+        if (last_dts > frame->dts()) {
+            // 时间戳回退了，点播流？
+            WarnL << "Dts decrease: " << last_dts << "->" << frame->dts() << ", flush all paced sender cache: " << _cache.size();
+            flushCache(frame->dts());
+        }
+        _cache.emplace(frame->dts(), Frame::getCacheAbleFrame(frame));
+        last_dts = frame->dts();
         return true;
     }
 
 private:
     void onTick() {
         std::lock_guard<std::recursive_mutex> lck(_mtx);
-        auto dst = _cache.empty() ? 0 : _cache.back().first;
+        auto max_dts = _cache.empty() ? 0 : _cache.rbegin()->first;
         while (!_cache.empty()) {
-            auto &front = _cache.front();
-            if (getCurrentStamp() < front.first) {
+            auto front = _cache.begin();
+            if (getCurrentStamp() < front->first + _cache_ms) {
                 // 还没到消费时间  [AUTO-TRANSLATED:09fb4c3d]
                 // Not yet time to consume
                 break;
             }
             // 时间到了，该消费frame了  [AUTO-TRANSLATED:2f007931]
             // Time is up, it's time to consume the frame
-            _cb(front.second);
-            _cache.pop_front();
+            _cb(front->second);
+            _cache.erase(front);
         }
 
-        if (_cache.empty() && dst) {
+        if (_cache.empty() && max_dts) {
             // 消费太快，需要增加缓存大小  [AUTO-TRANSLATED:c05bfbcd]
             // Consumption is too fast, need to increase cache size
-            setCurrentStamp(dst);
+            setCurrentStamp(max_dts);
             _cache_ms += kMinCacheMS;
         }
 
@@ -95,13 +102,18 @@ private:
         // Consumption is too slow, need to force flush data
         if (_cache.size() > 25 * 5) {
             WarnL << "Flush frame paced sender cache: " << _cache.size();
-            while (!_cache.empty()) {
-                auto &front = _cache.front();
-                _cb(front.second);
-                _cache.pop_front();
-            }
-            setCurrentStamp(dst);
+            flushCache(max_dts);
         }
+    }
+
+    void flushCache(uint64_t dts) {
+        while (!_cache.empty()) {
+            auto front = _cache.begin();
+            _cb(front->second);
+            _cache.erase(front);
+        }
+        setCurrentStamp(dts);
+        _cache_ms = kMinCacheMS;
     }
 
     uint64_t getCurrentStamp() { return _ticker.elapsedTime() + _stamp_offset; }
@@ -115,11 +127,12 @@ private:
     uint32_t _paced_sender_ms;
     uint32_t _cache_ms = kMinCacheMS;
     uint64_t _stamp_offset = 0;
+    uint64_t _last_dts[2] = {0, 0};
     OnFrame _cb;
     Ticker _ticker;
     Timer::Ptr _timer;
     std::recursive_mutex _mtx;
-    std::list<std::pair<uint64_t, Frame::Ptr>> _cache;
+    std::multimap<uint64_t, Frame::Ptr> _cache;
 };
 
 std::shared_ptr<MediaSinkInterface> MultiMediaSourceMuxer::makeRecorder(MediaSource &sender, Recorder::type type) {
@@ -164,7 +177,7 @@ static string getTrackInfoStr(const TrackSource *track_src){
                 break;
         }
     }
-    return std::move(codec_info);
+    return codec_info;
 }
 
 const ProtocolOption &MultiMediaSourceMuxer::getOption() const {
@@ -182,13 +195,16 @@ std::string MultiMediaSourceMuxer::shortUrl() const {
     }
     return _tuple.shortUrl();
 }
-
-void MultiMediaSourceMuxer::forEachRtpSender(const std::function<void(const std::string &ssrc)> &cb) const {
+#if defined(ENABLE_RTPPROXY)
+void MultiMediaSourceMuxer::forEachRtpSender(const std::function<void(const std::string &ssrc, const RtpSender &sender)> &cb) const {
     for (auto &pr : _rtp_sender) {
-        cb(pr.first);
+        auto sender = std::get<1>(pr.second).lock();
+        if (sender) {
+            cb(pr.first, *sender);
+        }
     }
 }
-
+#endif // ENABLE_RTPPROXY
 MultiMediaSourceMuxer::MultiMediaSourceMuxer(const MediaTuple& tuple, float dur_sec, const ProtocolOption &option): _tuple(tuple) {
     if (!option.stream_replace.empty()) {
         // 支持在on_publish hook中替换stream_id  [AUTO-TRANSLATED:375eb2ff]
@@ -385,6 +401,88 @@ bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type
     }
 }
 
+std::string MultiMediaSourceMuxer::startRecord(const std::string &file_path, uint32_t back_time_ms, uint32_t forward_time_ms) {
+#if !defined(ENABLE_MP4)
+    throw std::invalid_argument("mp4相关功能未打开，请开启ENABLE_MP4宏后编译再测试");
+#else
+    if (!_ring) {
+        throw std::runtime_error("frame gop cache disabled, start record event video failed");
+    }
+    auto path = Recorder::getRecordPath(Recorder::type_mp4, _tuple, _option.mp4_save_path);
+    path += file_path;
+    TraceL << "mp4 save path: " << path;
+
+    auto muxer = std::make_shared<MP4Muxer>();
+    muxer->openMP4(path);
+    for (auto &track : MediaSink::getTracks()) {
+        muxer->addTrack(track);
+    }
+    muxer->addTrackCompleted();
+
+    std::list<Frame::Ptr> history;
+    _ring->flushGop([&](const Frame::Ptr &frame) { history.emplace_back(frame); });
+    if (!history.empty()) {
+        auto now_dts = history.back()->dts();
+
+        decltype(history)::iterator pos = history.end();
+        for (auto it = history.rbegin(); it != history.rend(); ++it) {
+            auto &frame = *it;
+            if (frame->getTrackType() != TrackVideo || (!frame->configFrame() && !frame->keyFrame())) {
+                continue;
+            }
+            // 如果视频关键帧到末尾的时长超过一定的时间，那前面的数据应该全部删除
+            if (frame->dts() + back_time_ms < now_dts) {
+                pos = it.base();
+                --pos;
+                break;
+            }
+        }
+        if (pos != history.end()) {
+            // 移除前面过多的数据
+            TraceL << "clear history video: " << history.front()->dts() << " -> " << (*pos)->dts();
+            history.erase(history.begin(), pos);
+        }
+        if (!history.empty()) {
+            auto &front = history.front();
+            InfoL << "start record: " << path
+                  << ", start_dts: " << front->dts() << ", key_frame: " << front->keyFrame() << ", config_frame: " << front->configFrame()
+                  << ", now_dts: " << now_dts;
+        }
+
+        for (auto &frame : history) {
+            muxer->inputFrame(frame);
+        }
+    }
+
+    auto reader = _ring->attach(MultiMediaSourceMuxer::getOwnerPoller(MediaSource::NullMediaSource()), false);
+    uint64_t now_dts = 0;
+    int selected_index = -1;
+    reader->setReadCB([muxer, now_dts, selected_index, forward_time_ms, reader, path](const Frame::Ptr &frame) mutable {
+        // 循环引用自身
+        if (!now_dts) {
+            now_dts = frame->dts();
+            selected_index = frame->getIndex();
+        }
+        if (frame->getIndex() == selected_index && now_dts + forward_time_ms < frame->dts()) {
+            InfoL << "stop record: " << path << ", end dts: " << frame->dts();
+            WorkThreadPool::Instance().getPoller()->async([muxer]() { muxer->closeMP4(); });
+            reader = nullptr;
+            return;
+        }
+        muxer->inputFrame(frame);
+    });
+    std::weak_ptr<RingType::RingReader> weak_reader = reader;
+    reader->setDetachCB([weak_reader]() {
+        if (auto strong_reader = weak_reader.lock()) {
+            // 防止循环引用
+            strong_reader->setReadCB(nullptr);
+        }
+    });
+
+    return path;
+#endif
+}
+
 // 此函数可能跨线程调用  [AUTO-TRANSLATED:e8c5f74d]
 // This function may be called across threads
 bool MultiMediaSourceMuxer::isRecording(MediaSource &sender, Recorder::type type) {
@@ -400,7 +498,7 @@ bool MultiMediaSourceMuxer::isRecording(MediaSource &sender, Recorder::type type
 
 void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const MediaSourceEvent::SendRtpArgs &args, const std::function<void(uint16_t, const toolkit::SockException &)> cb) {
 #if defined(ENABLE_RTPPROXY)
-    createGopCacheIfNeed();
+    createGopCacheIfNeed(1);
 
     auto ring = _ring;
     auto ssrc = args.ssrc;
@@ -423,7 +521,7 @@ void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const MediaSourceE
         }
     });
 
-    rtp_sender->startSend(args, [ssrc,ssrc_multi_send, weak_self, rtp_sender, cb, tracks, ring, poller](uint16_t local_port, const SockException &ex) mutable {
+    rtp_sender->startSend(sender, args, [ssrc,ssrc_multi_send, weak_self, rtp_sender, cb, tracks, ring, poller](uint16_t local_port, const SockException &ex) mutable {
         cb(local_port, ex);
         auto strong_self = weak_self.lock();
         if (!strong_self || ex) {
@@ -443,10 +541,11 @@ void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const MediaSourceE
         // 可能归属线程发生变更  [AUTO-TRANSLATED:2b379e30]
         // The owning thread may change
         strong_self->getOwnerPoller(MediaSource::NullMediaSource())->async([=]() {
-            if(!ssrc_multi_send) {
+            if (!ssrc_multi_send) {
                 strong_self->_rtp_sender.erase(ssrc);
             }
-            strong_self->_rtp_sender.emplace(ssrc,reader);
+            std::weak_ptr<RtpSender> sender = rtp_sender;
+            strong_self->_rtp_sender.emplace(ssrc, make_tuple(reader, sender));
         });
     });
 #else
@@ -495,6 +594,21 @@ EventPoller::Ptr MultiMediaSourceMuxer::getOwnerPoller(MediaSource &sender) {
         // Listener did not reload getOwnerPoller
         return _poller;
     }
+}
+
+bool MultiMediaSourceMuxer::close(MediaSource &sender) {
+    MediaSourceEventInterceptor::close(sender);
+    _rtmp = nullptr;
+    _rtsp = nullptr;
+    _fmp4 = nullptr;
+    _ts = nullptr;
+    _mp4 = nullptr;
+    _hls = nullptr;
+    _hls_fmp4 = nullptr;
+#if defined(ENABLE_RTPPROXY)
+    _rtp_sender.clear();
+#endif // ENABLE_RTPPROXY
+    return true;
 }
 
 std::shared_ptr<MultiMediaSourceMuxer> MultiMediaSourceMuxer::getMuxer(MediaSource &sender) const {
@@ -576,9 +690,9 @@ void MultiMediaSourceMuxer::onAllTrackReady() {
     }
 
 #if defined(ENABLE_RTPPROXY)
-    GET_CONFIG(bool, gop_cache, RtpProxy::kGopCache);
-    if (gop_cache) {
-        createGopCacheIfNeed();
+    GET_CONFIG(size_t, gop_cache, RtpProxy::kGopCache);
+    if (gop_cache > 0) {
+        createGopCacheIfNeed(gop_cache);
     }
 #endif
 
@@ -593,7 +707,7 @@ void MultiMediaSourceMuxer::onAllTrackReady() {
     InfoL << "stream: " << shortUrl() << " , codec info: " << getTrackInfoStr(this);
 }
 
-void MultiMediaSourceMuxer::createGopCacheIfNeed() {
+void MultiMediaSourceMuxer::createGopCacheIfNeed(size_t gop_count) {
     if (_ring) {
         return;
     }
@@ -607,7 +721,7 @@ void MultiMediaSourceMuxer::createGopCacheIfNeed() {
                 strong_self->onReaderChanged(*src, strong_self->totalReaderCount());
             });
         }
-    });
+    }, gop_count);
 }
 
 void MultiMediaSourceMuxer::resetTracks() {
